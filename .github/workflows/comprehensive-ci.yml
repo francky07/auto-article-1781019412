@@ -6,27 +6,22 @@ on:
   pull_request:
     branches: [ master, main, develop ]
   schedule:
-    - cron: '0 2 * * 0'  # Weekly on Sunday at 2 AM
+    - cron: '0 2 * * 0'
 
 jobs:
-  # Code Quality & Security Scanning
   code-quality:
     runs-on: ubuntu-latest
     name: Code Quality & Security
-    
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-
       - name: Run CodeQL Analysis
         uses: github/codeql-action/init@v2
         with:
           languages: 'cpp, csharp, go, java, javascript, python, ruby'
-
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v2
-
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -34,135 +29,104 @@ jobs:
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-results.sarif'
-
-      - name: Upload Trivy results to GitHub Security
+      - name: Upload Trivy results
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # Linting & Formatting
   lint:
     runs-on: ubuntu-latest
     name: Linting & Code Style
-    
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-
-      - name: Run ESLint (if applicable)
+      - name: Run ESLint
         run: |
           if [ -f package.json ]; then
             npm install
             npm run lint 2>/dev/null || echo "No lint script found"
           fi
-
-      - name: Run Prettier (if applicable)
+      - name: Run Prettier
         run: |
           if [ -f .prettierrc ] || [ -f .prettierrc.json ]; then
             npm install prettier -g
             prettier --check . 2>/dev/null || echo "Prettier check skipped"
           fi
 
-  # Python Testing (if applicable)
   python-tests:
     runs-on: ubuntu-latest
     name: Python Tests
     strategy:
       matrix:
         python-version: ['3.8', '3.9', '3.10', '3.11']
-    
     steps:
       - uses: actions/checkout@v3
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest pytest-cov flake8 black
-
       - name: Lint with flake8
         run: |
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || echo "Flake8 check skipped"
-
-      - name: Check code formatting with black
+      - name: Check code formatting
         run: |
           black --check . 2>/dev/null || echo "Black check skipped"
-
       - name: Run pytest
         run: |
           if [ -d tests ] || [ -f conftest.py ]; then pytest --cov=. --cov-report=xml; fi
 
-  # Node.js Testing (if applicable)
   node-tests:
     runs-on: ubuntu-latest
     name: Node.js Tests
     strategy:
       matrix:
         node-version: ['14', '16', '18', '20']
-    
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: ${{ matrix.node-version }}
-
       - name: Install dependencies
         run: |
-          if [ -f package.json ]; then
-            npm install
-          fi
-
+          if [ -f package.json ]; then npm install; fi
       - name: Run tests
         run: |
-          if [ -f package.json ]; then
-            npm test 2>/dev/null || echo "No test script found"
-          fi
+          if [ -f package.json ]; then npm test 2>/dev/null || echo "No test script found"; fi
 
-  # R/RStudio Testing (if applicable)
   r-tests:
     runs-on: ubuntu-latest
     name: R Package Tests
-    
     steps:
       - uses: actions/checkout@v3
-
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
-
       - name: Install R dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         if: always()
-
       - name: Run R CMD check
         uses: r-lib/actions/check-r-package@v2
         if: always()
 
-  # Build & Artifact Creation
   build:
     runs-on: ubuntu-latest
-    name: Build & Create Artifacts
+    name: Build & Artifacts
     needs: [code-quality, lint]
-    
     steps:
       - uses: actions/checkout@v3
-
-      - name: Create distribution artifacts
+      - name: Create artifacts
         run: |
           mkdir -p dist/
           cp -r . dist/ 2>/dev/null || true
           tar -czf artifact-${{ github.sha }}.tar.gz dist/
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
@@ -170,27 +134,16 @@ jobs:
           path: artifact-${{ github.sha }}.tar.gz
           retention-days: 30
 
-  # Notifications & Status
   notify:
     runs-on: ubuntu-latest
     name: Workflow Summary
     needs: [code-quality, lint, python-tests, node-tests, r-tests, build]
     if: always()
-    
     steps:
       - name: Generate Summary
         run: |
           echo "## 🤖 CI/CD Pipeline Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Workflow Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "**Author:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-
-      - name: Check Test Results
-        run: |
-          if [ "${{ needs.code-quality.result }}" == "failure" ] || [ "${{ needs.lint.result }}" == "failure" ]; then
-            echo "⚠️ Some checks failed - review the workflow logs"
-            exit 1
-          fi
-          echo "✅ All checks passed!"
